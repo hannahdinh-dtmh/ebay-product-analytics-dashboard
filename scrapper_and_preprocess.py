@@ -40,8 +40,9 @@ time.sleep(5)  # Wait 5 seconds after homepage before hitting search
 # Create an empty list to store the scraped data
 product_data = []
 
-# Iterate over page numbers 1 to 5
-for page_num in range(1, 6):
+# Iterate over page numbers 1 to 5 then
+# Iterate over page numbers 6 to 10
+for page_num in range(6, 11):
     print(f"Scraping page {page_num}...")
     url = url_pattern.format(page_num=page_num)
 
