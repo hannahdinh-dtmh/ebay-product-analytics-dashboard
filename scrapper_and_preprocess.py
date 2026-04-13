@@ -130,8 +130,45 @@ Electronics = pd.DataFrame(
     ]
 )
 
-# Clean Condition — strip extra category text after bullet separator (e.g. "Pre-Owned ·Nintendo DS")
-Electronics['Condition'] = Electronics['Condition'].str.split('·').str[0].str.strip()
+# Clean Condition — strip concatenated category/brand text after bullet or newline
+# Handles · (U+00B7), ¬∑ (Latin-1 mis-encoding), newlines
+Electronics['Condition'] = (
+    Electronics['Condition']
+    .str.split(r'[·•\n]|¬∑', regex=True).str[0]
+    .str.strip()
+    .replace('', 'Unknown')
+)
+
+# ── Product Family Classification ───────────────────────────────────────────────
+
+FAMILY_RULES = [
+    ('Nintendo Switch',        ['nintendo switch']),
+    ('Nintendo 3DS / 2DS',     ['3ds', '2ds']),
+    ('Nintendo GameCube / Wii',['gamecube', 'nintendo wii', 'wii ']),
+    ('PlayStation',            ['playstation', 'ps2', 'ps3', 'ps4', 'ps5',
+                                 'psp', 'ps vita', 'psvita']),
+    ('Xbox',                   ['xbox']),
+    ('Cameras & Photography',  ['camera', 'canon', 'nikon', 'mirrorless',
+                                 'dslr', 'eos', 'fujifilm', 'leica']),
+    ('Smartphones',            ['iphone', 'smartphone', 'android unlocked',
+                                 'dual sim', 'umidigi', 'unlocked phone']),
+    ('Laptops & Tablets',      ['laptop', 'tablet', 'ipad', 'macbook', 'chromebook']),
+    ('Audio',                  ['headphone', 'earphone', 'speaker',
+                                 'airpod', 'earbud', 'earbuds']),
+    ('Retro / Other Consoles', ['retro', 'game stick', 'atari', 'sega',
+                                 'neo geo', 'famicom']),
+    ('Accessories & Parts',    ['parts only', 'charger', 'cable', 'game pass',
+                                 'controller', 'memory card', 'adapter', 'membership']),
+]
+
+def classify_product_family(title: str) -> str:
+    t = str(title).lower()
+    for family, keywords in FAMILY_RULES:
+        if any(kw in t for kw in keywords):
+            return family
+    return 'Other Electronics'
+
+Electronics['Product_Family'] = Electronics['Title'].apply(classify_product_family)
 
 # Parse seller rating string → numeric columns
 # Format: "100% positive (165)"

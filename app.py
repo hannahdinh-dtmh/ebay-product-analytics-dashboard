@@ -125,19 +125,76 @@ COLOR_SEQ = ["#4C8BF5", "#00C49F", "#FFB347", "#FF6B6B", "#A855F7", "#F472B6"]
 
 # ── Load Data ──────────────────────────────────────────────────────────────────
 
+FAMILY_RULES = [
+    ('Nintendo Switch',        ['nintendo switch']),
+    ('Nintendo 3DS / 2DS',     ['3ds', '2ds']),
+    ('Nintendo GameCube / Wii',['gamecube', 'nintendo wii', 'wii ']),
+    ('PlayStation',            ['playstation', 'ps2', 'ps3', 'ps4', 'ps5',
+                                 'psp', 'ps vita', 'psvita']),
+    ('Xbox',                   ['xbox']),
+    ('Cameras & Photography',  ['camera', 'canon', 'nikon', 'mirrorless',
+                                 'dslr', 'eos', 'fujifilm', 'leica']),
+    ('Smartphones',            ['iphone', 'smartphone', 'android unlocked',
+                                 'dual sim', 'umidigi', 'unlocked phone']),
+    ('Laptops & Tablets',      ['laptop', 'tablet', 'ipad', 'macbook', 'chromebook']),
+    ('Audio',                  ['headphone', 'earphone', 'speaker',
+                                 'airpod', 'earbud', 'earbuds']),
+    ('Retro / Other Consoles', ['retro', 'game stick', 'atari', 'sega',
+                                 'neo geo', 'famicom']),
+    ('Accessories & Parts',    ['parts only', 'charger', 'cable', 'game pass',
+                                 'controller', 'memory card', 'adapter', 'membership']),
+]
+
+def classify_product_family(title: str) -> str:
+    t = str(title).lower()
+    for family, keywords in FAMILY_RULES:
+        if any(kw in t for kw in keywords):
+            return family
+    return 'Other Electronics'
+
+CONDITION_CANONICAL = {
+    'brand new':            'Brand New',
+    'new':                  'Brand New',
+    'pre-owned':            'Pre-Owned',
+    'used':                 'Pre-Owned',
+    'very good - refurbished': 'Very Good – Refurbished',
+    'good - refurbished':   'Good – Refurbished',
+    'excellent - refurbished': 'Excellent – Refurbished',
+    'certified refurbished':'Certified Refurbished',
+    'parts only':           'Parts Only',
+    'for parts or not working': 'Parts Only',
+}
+
+def clean_condition(raw: str) -> str:
+    """Strip concatenated product info and normalise condition label.
+    Handles multiple separator variants: · (U+00B7), ¬∑ (Latin-1 encoding), newline.
+    """
+    import re
+    # Split on middle dot (various encodings), bullet, or newline
+    core = re.split(r'[·•\n]|¬∑', str(raw))[0].strip()
+    return CONDITION_CANONICAL.get(core.lower(), core) if core else 'Unknown'
+
 @st.cache_data
 def load_data():
     csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Electronics.csv")
-    if os.path.exists(csv_path):
-        df = pd.read_csv(csv_path)
-        # Price tier segmentation
-        df["Price_tier"] = pd.cut(
-            df["Price_sold"],
-            bins=[0, 50, 200, float("inf")],
-            labels=["Budget (< $50)", "Mid-range ($50–200)", "Premium (> $200)"]
-        )
-        return df
-    return None
+    if not os.path.exists(csv_path):
+        return None
+    df = pd.read_csv(csv_path)
+
+    # Condition — normalise if not already clean
+    df["Condition"] = df["Condition"].apply(clean_condition)
+
+    # Product Family — classify from title (idempotent if column already exists)
+    if "Product_Family" not in df.columns:
+        df["Product_Family"] = df["Title"].apply(classify_product_family)
+
+    # Price tier
+    df["Price_tier"] = pd.cut(
+        df["Price_sold"],
+        bins=[0, 50, 200, float("inf")],
+        labels=["Budget (< $50)", "Mid-range ($50–$200)", "Premium (> $200)"]
+    )
+    return df
 
 df_raw = load_data()
 
@@ -152,6 +209,9 @@ with st.sidebar:
         st.stop()
 
     st.markdown("### Filters")
+
+    all_families = sorted(df_raw["Product_Family"].dropna().unique().tolist())
+    sel_families = st.multiselect("Product Family", all_families, default=all_families)
 
     conditions = ["All"] + sorted(df_raw["Condition"].dropna().unique().tolist())
     sel_condition = st.selectbox("Condition", conditions)
@@ -172,9 +232,12 @@ with st.sidebar:
     st.markdown("---")
     st.markdown(f"**Scraped:** {df_raw['Scraped_date'].iloc[0] if 'Scraped_date' in df_raw else 'N/A'}")
     st.markdown(f"**Raw rows:** {len(df_raw):,}")
+    st.markdown(f"**Families:** {len(all_families)}")
 
 # Apply filters
 df = df_raw.copy()
+if sel_families:
+    df = df[df["Product_Family"].isin(sel_families)]
 if sel_condition != "All":
     df = df[df["Condition"] == sel_condition]
 if sel_listing != "All":
@@ -220,91 +283,164 @@ t1, t2, t3, t4, t5 = st.tabs([
 with t1:
     st.markdown('<div class="section-title">Market Snapshot</div>', unsafe_allow_html=True)
 
-    # KPI row 1
+    # ── KPI Row ─────────────────────────────────────────────────────────────────
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     with c1:
         kpi_card("Total Listings", f"{len(df):,}")
     with c2:
-        kpi_card("Avg Price", f"${df['Price_sold'].mean():.2f}")
+        kpi_card("Median Price", f"${df['Price_sold'].median():.0f}")
     with c3:
-        kpi_card("Median Price", f"${df['Price_sold'].median():.2f}")
+        kpi_card("Avg Price", f"${df['Price_sold'].mean():.0f}")
     with c4:
         free_pct = (df["Shipping_type"] == "Free shipping").mean() * 100
         kpi_card("Free Shipping", f"{free_pct:.1f}%",
                  delta="↑ buyer-friendly" if free_pct > 60 else "↓ below 60%",
                  delta_positive=free_pct > 60)
     with c5:
-        new_pct = (df["Condition"].str.contains("Brand New|New", na=False)).mean() * 100
-        kpi_card("New Items", f"{new_pct:.1f}%")
+        top_family = df["Product_Family"].value_counts().idxmax()
+        top_family_pct = df["Product_Family"].value_counts().iloc[0] / len(df) * 100
+        kpi_card("Top Category", top_family, delta=f"{top_family_pct:.0f}% of listings",
+                 delta_positive=True)
     with c6:
-        avg_rating = df["Seller_Rating%"].replace(0, np.nan).mean()
-        kpi_card("Avg Seller Rating",
-                 f"{avg_rating:.1f}%" if not np.isnan(avg_rating) else "N/A")
+        premium_pct = (df["Price_tier"] == "Premium (> $200)").mean() * 100
+        kpi_card("Premium Items", f"{premium_pct:.1f}%",
+                 delta="high-value catalogue" if premium_pct > 20 else "budget-heavy",
+                 delta_positive=premium_pct > 20)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Row: Condition donut + Listing type donut + Price tier bar
-    col_a, col_b, col_c = st.columns([1.2, 1.2, 1.6])
+    # ── Hero: Catalog Treemap ────────────────────────────────────────────────────
+    st.markdown('<div class="section-title">Catalog Composition — Product Family</div>',
+                unsafe_allow_html=True)
+
+    family_agg = (df.groupby("Product_Family")
+                  .agg(Count=("Title", "count"),
+                       Median_price=("Price_sold", "median"),
+                       Avg_price=("Price_sold", "mean"),
+                       Free_ship_pct=("Shipping_type",
+                                      lambda x: round((x == "Free shipping").mean() * 100, 1)))
+                  .reset_index()
+                  .sort_values("Count", ascending=False))
+
+    fig = px.treemap(
+        family_agg,
+        path=["Product_Family"],
+        values="Count",
+        color="Median_price",
+        color_continuous_scale=["#1C2A4A", "#4C8BF5", "#00C49F", "#FFB347", "#FF6B6B"],
+        color_continuous_midpoint=family_agg["Median_price"].median(),
+        custom_data=["Median_price", "Avg_price", "Free_ship_pct"],
+        template=PLOTLY_TEMPLATE,
+    )
+    fig.update_traces(
+        texttemplate="<b>%{label}</b><br>%{value} listings<br>Median $%{customdata[0]:.0f}",
+        hovertemplate=(
+            "<b>%{label}</b><br>"
+            "Listings: %{value}<br>"
+            "Median Price: $%{customdata[0]:.2f}<br>"
+            "Avg Price: $%{customdata[1]:.2f}<br>"
+            "Free Shipping: %{customdata[2]}%<extra></extra>"
+        ),
+        textfont_size=13,
+    )
+    fig.update_layout(
+        height=420,
+        margin=dict(t=10, b=10, l=10, r=10),
+        coloraxis_colorbar=dict(title="Median<br>Price ($)", thickness=12, len=0.6),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    insight(f"Rectangle size = number of listings; colour = median price. "
+            f"{top_family} dominates with {df['Product_Family'].value_counts().iloc[0]:,} listings. "
+            "Cameras & Photography stands out as the highest-value category despite lower volume.")
+
+    # ── Row 2: Price by Family box + Listing type donut ─────────────────────────
+    col_a, col_b = st.columns([2.5, 1])
 
     with col_a:
-        st.markdown('<div class="section-title">Condition Mix</div>', unsafe_allow_html=True)
-        cond_counts = df["Condition"].value_counts().reset_index()
-        cond_counts.columns = ["Condition", "Count"]
-        fig = px.pie(cond_counts, names="Condition", values="Count",
-                     hole=0.55, color_discrete_sequence=COLOR_SEQ,
-                     template=PLOTLY_TEMPLATE)
-        fig.update_traces(textposition="outside", textinfo="percent+label")
-        fig.update_layout(showlegend=False, margin=dict(t=10, b=10, l=10, r=10), height=300)
+        st.markdown('<div class="section-title">Price Range by Product Family</div>',
+                    unsafe_allow_html=True)
+        # Order families by median price for readability
+        family_order = (df.groupby("Product_Family")["Price_sold"]
+                        .median().sort_values(ascending=True).index.tolist())
+        fig = px.box(
+            df, y="Product_Family", x="Price_sold",
+            color="Product_Family",
+            category_orders={"Product_Family": family_order},
+            color_discrete_sequence=COLOR_SEQ * 3,
+            template=PLOTLY_TEMPLATE,
+            labels={"Price_sold": "Price (USD)", "Product_Family": ""},
+            points=False,
+        )
+        fig.update_layout(height=420, showlegend=False,
+                          margin=dict(t=10, b=10),
+                          xaxis=dict(range=[0, df["Price_sold"].quantile(0.97)]))
         st.plotly_chart(fig, use_container_width=True)
 
     with col_b:
-        st.markdown('<div class="section-title">Listing Type Split</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Listing Type</div>',
+                    unsafe_allow_html=True)
         lst_counts = df["Listing_type"].value_counts().reset_index()
         lst_counts.columns = ["Type", "Count"]
         fig = px.pie(lst_counts, names="Type", values="Count",
-                     hole=0.55, color_discrete_sequence=["#4C8BF5","#00C49F","#FFB347"],
+                     hole=0.55,
+                     color_discrete_sequence=["#4C8BF5", "#00C49F", "#FFB347"],
                      template=PLOTLY_TEMPLATE)
         fig.update_traces(textposition="outside", textinfo="percent+label")
-        fig.update_layout(showlegend=False, margin=dict(t=10, b=10, l=10, r=10), height=300)
+        fig.update_layout(showlegend=False,
+                          margin=dict(t=10, b=10, l=10, r=10), height=200)
         st.plotly_chart(fig, use_container_width=True)
 
-    with col_c:
-        st.markdown('<div class="section-title">Price Tier Distribution</div>', unsafe_allow_html=True)
-        tier_counts = df["Price_tier"].value_counts().reset_index()
-        tier_counts.columns = ["Tier", "Count"]
-        tier_order = ["Budget (< $50)", "Mid-range ($50–200)", "Premium (> $200)"]
-        tier_counts["Tier"] = pd.Categorical(tier_counts["Tier"], categories=tier_order, ordered=True)
-        tier_counts = tier_counts.sort_values("Tier")
-        fig = px.bar(tier_counts, x="Tier", y="Count",
-                     color="Tier",
-                     color_discrete_map={
-                         "Budget (< $50)": "#00C49F",
-                         "Mid-range ($50–200)": "#4C8BF5",
-                         "Premium (> $200)": "#A855F7"
-                     },
-                     template=PLOTLY_TEMPLATE, text="Count")
-        fig.update_traces(textposition="outside")
-        fig.update_layout(showlegend=False, margin=dict(t=10, b=10),
-                          height=300, xaxis_title="", yaxis_title="Listings")
+        st.markdown('<div class="section-title">Shipping</div>',
+                    unsafe_allow_html=True)
+        ship_counts = df["Shipping_type"].value_counts().reset_index()
+        ship_counts.columns = ["Type", "Count"]
+        fig = px.pie(ship_counts, names="Type", values="Count",
+                     hole=0.55,
+                     color_discrete_map={"Free shipping": "#00C49F",
+                                         "Paid shipping": "#FF6B6B"},
+                     template=PLOTLY_TEMPLATE)
+        fig.update_traces(textposition="outside", textinfo="percent+label")
+        fig.update_layout(showlegend=False,
+                          margin=dict(t=10, b=10, l=10, r=10), height=200)
         st.plotly_chart(fig, use_container_width=True)
 
-    # Price distribution overview
-    st.markdown('<div class="section-title">Price Distribution Overview</div>', unsafe_allow_html=True)
-    fig = px.histogram(df, x="Price_sold", nbins=40,
-                       color="Condition", barmode="overlay",
-                       template=PLOTLY_TEMPLATE, color_discrete_sequence=COLOR_SEQ,
-                       labels={"Price_sold": "Price (USD)", "count": "Listings"})
-    fig.update_layout(height=320, margin=dict(t=10, b=10), bargap=0.05,
-                      legend=dict(orientation="h", y=1.05))
-    # Add median line
-    fig.add_vline(x=df["Price_sold"].median(), line_dash="dash",
-                  line_color="#FFB347", annotation_text=f"Median ${df['Price_sold'].median():.0f}",
-                  annotation_position="top right")
+    # ── Row 3: Price Tier by Family (stacked bar) ────────────────────────────────
+    st.markdown('<div class="section-title">Price Tier Breakdown by Product Family</div>',
+                unsafe_allow_html=True)
+
+    tier_family = (df.groupby(["Product_Family", "Price_tier"])
+                   .size().reset_index(name="Count"))
+    tier_family = tier_family[tier_family["Price_tier"].notna()]
+    tier_order_list = ["Budget (< $50)", "Mid-range ($50–$200)", "Premium (> $200)"]
+
+    fig = px.bar(
+        tier_family,
+        x="Product_Family", y="Count",
+        color="Price_tier",
+        barmode="stack",
+        category_orders={
+            "Product_Family": family_order[::-1],
+            "Price_tier": tier_order_list,
+        },
+        color_discrete_map={
+            "Budget (< $50)":        "#00C49F",
+            "Mid-range ($50–$200)":  "#4C8BF5",
+            "Premium (> $200)":      "#A855F7",
+        },
+        template=PLOTLY_TEMPLATE,
+        labels={"Count": "Listings", "Product_Family": "", "Price_tier": "Tier"},
+    )
+    fig.update_layout(
+        height=350, xaxis=dict(tickangle=-30),
+        legend=dict(orientation="h", y=1.05, font=dict(size=11)),
+        margin=dict(t=10, b=10),
+    )
     st.plotly_chart(fig, use_container_width=True)
 
-    insight(f"The market is {('heavily skewed toward budget listings' if df['Price_sold'].median() < 100 else 'dominated by mid-range pricing')}. "
-            f"Median price ${df['Price_sold'].median():.2f} vs average ${df['Price_sold'].mean():.2f} — "
-            f"{'a gap of $' + str(round(df['Price_sold'].mean() - df['Price_sold'].median(), 2)) + ' suggests high-value outliers pulling the mean up.' if df['Price_sold'].mean() > df['Price_sold'].median() else 'prices are relatively evenly distributed.'}")
+    insight("Gaming consoles (PSP/PS Vita, Nintendo lines, Xbox) cluster heavily in the "
+            "mid-range tier. Cameras skew premium. Accessories dominate the budget tier — "
+            "this mix means a single global price histogram would be misleading.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -312,82 +448,153 @@ with t1:
 # ══════════════════════════════════════════════════════════════════════════════
 
 with t2:
-    st.markdown('<div class="section-title">Price Intelligence</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Product Analytics — Family Deep Dive</div>',
+                unsafe_allow_html=True)
 
-    col_a, col_b = st.columns(2)
+    # ── Family selector ──────────────────────────────────────────────────────────
+    available_families = sorted(df["Product_Family"].dropna().unique().tolist())
+    sel_t2_families = st.multiselect(
+        "Focus on Product Families (leave blank = all)",
+        available_families, default=[],
+        key="t2_family_filter"
+    )
+    df2 = df[df["Product_Family"].isin(sel_t2_families)] if sel_t2_families else df.copy()
 
-    with col_a:
-        # Price by condition — violin
-        fig = px.violin(df, x="Condition", y="Price_sold", box=True,
-                        color="Condition", color_discrete_sequence=COLOR_SEQ,
-                        template=PLOTLY_TEMPLATE,
-                        labels={"Price_sold": "Price (USD)", "Condition": ""})
-        fig.update_layout(height=380, showlegend=False,
-                          title="Price Distribution by Condition",
-                          xaxis=dict(tickangle=-25))
+    if len(df2) == 0:
+        st.warning("No data for selected families.")
+    else:
+        # ── Price by Product Family — horizontal box ─────────────────────────────
+        st.markdown('<div class="section-title">Price Spread by Product Family</div>',
+                    unsafe_allow_html=True)
+
+        family_order2 = (df2.groupby("Product_Family")["Price_sold"]
+                         .median().sort_values(ascending=True).index.tolist())
+        # Cap x-axis at 98th percentile to avoid camera outliers collapsing the chart
+        x_cap = df2["Price_sold"].quantile(0.98)
+
+        fig = px.box(
+            df2, y="Product_Family", x="Price_sold",
+            color="Product_Family",
+            category_orders={"Product_Family": family_order2},
+            color_discrete_sequence=COLOR_SEQ * 3,
+            template=PLOTLY_TEMPLATE,
+            points="suspectedoutliers",
+            labels={"Price_sold": "Price (USD)", "Product_Family": ""},
+        )
+        fig.update_layout(
+            height=420, showlegend=False,
+            margin=dict(t=10, b=10),
+            xaxis=dict(range=[0, x_cap], title="Price (USD) — capped at 98th pct"),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        insight("Outlier dots visible beyond whiskers = genuine pricing anomalies worth "
+                "investigating (mislisted items, rare collectibles, or multi-unit bundles).")
+
+        # ── Condition × Product Family heatmap ──────────────────────────────────
+        st.markdown('<div class="section-title">Condition × Product Family Matrix</div>',
+                    unsafe_allow_html=True)
+
+        # Keep top conditions only (collapse rare ones)
+        top_conditions = df2["Condition"].value_counts().head(6).index.tolist()
+        df2_heat = df2[df2["Condition"].isin(top_conditions)]
+        cross_fam = pd.crosstab(df2_heat["Condition"], df2_heat["Product_Family"])
+
+        fig = px.imshow(
+            cross_fam, text_auto=True, aspect="auto",
+            color_continuous_scale=["#1C2A4A", "#4C8BF5", "#00C49F"],
+            template=PLOTLY_TEMPLATE,
+            labels=dict(x="Product Family", y="Condition", color="Listings"),
+        )
+        fig.update_layout(height=340, margin=dict(t=10, b=10),
+                          xaxis=dict(tickangle=-30))
         st.plotly_chart(fig, use_container_width=True)
 
-    with col_b:
-        # Price by listing type — box
-        fig = px.box(df, x="Listing_type", y="Price_sold",
-                     color="Listing_type",
-                     color_discrete_map={"Buy It Now":"#4C8BF5","Best Offer":"#00C49F","Auction":"#FFB347"},
-                     template=PLOTLY_TEMPLATE,
-                     labels={"Price_sold": "Price (USD)", "Listing_type": ""})
-        fig.update_layout(height=380, showlegend=False,
-                          title="Price Distribution by Listing Type")
+        insight("Dark blue = rare combination, bright green = dominant. "
+                "Gaming consoles are predominantly Pre-Owned, while cameras skew Brand New — "
+                "this mirrors typical second-hand vs. new-purchase behaviour by category.")
+
+        # ── Listing Type by Family (grouped bar) ────────────────────────────────
+        st.markdown('<div class="section-title">Listing Strategy by Product Family</div>',
+                    unsafe_allow_html=True)
+
+        lst_fam = (df2.groupby(["Product_Family", "Listing_type"])
+                   .size().reset_index(name="Count"))
+        fig = px.bar(
+            lst_fam, x="Product_Family", y="Count",
+            color="Listing_type", barmode="group",
+            category_orders={"Product_Family": family_order2[::-1],
+                             "Listing_type": ["Buy It Now", "Best Offer", "Auction"]},
+            color_discrete_map={
+                "Buy It Now":  "#4C8BF5",
+                "Best Offer":  "#00C49F",
+                "Auction":     "#FFB347",
+            },
+            template=PLOTLY_TEMPLATE,
+            labels={"Count": "Listings", "Product_Family": "", "Listing_type": ""},
+        )
+        fig.update_layout(
+            height=360, xaxis=dict(tickangle=-30),
+            legend=dict(orientation="h", y=1.05, font=dict(size=11)),
+            margin=dict(t=10, b=10),
+        )
         st.plotly_chart(fig, use_container_width=True)
 
-    # Condition × Listing type heatmap
-    st.markdown('<div class="section-title">Condition × Listing Type Matrix</div>', unsafe_allow_html=True)
-    cross = pd.crosstab(df["Condition"], df["Listing_type"])
-    fig = px.imshow(cross, text_auto=True, aspect="auto",
-                    color_continuous_scale="Blues",
-                    template=PLOTLY_TEMPLATE,
-                    labels=dict(x="Listing Type", y="Condition", color="Listings"))
-    fig.update_layout(height=350, margin=dict(t=10, b=10))
-    st.plotly_chart(fig, use_container_width=True)
+        insight("Best Offer dominates high-value categories (cameras, late-gen consoles) — "
+                "sellers price aspirationally and expect negotiation. "
+                "Buy It Now dominates accessories where prices are fixed and low-margin.")
 
-    insight("The heatmap reveals which condition-listing type combinations dominate the market. "
-            "High 'Pre-Owned × Buy It Now' concentration is typical in electronics resale markets.")
+        # ── Condition Donut + Shipping Donut side by side ────────────────────────
+        col_c, col_d = st.columns(2)
 
-    # Price tier deep dive
-    st.markdown('<div class="section-title">Price Tier Deep Dive</div>', unsafe_allow_html=True)
-    col_c, col_d = st.columns(2)
+        with col_c:
+            st.markdown('<div class="section-title">Condition Mix</div>',
+                        unsafe_allow_html=True)
+            cond_counts2 = df2["Condition"].value_counts().head(7).reset_index()
+            cond_counts2.columns = ["Condition", "Count"]
+            fig = px.pie(cond_counts2, names="Condition", values="Count",
+                         hole=0.55, color_discrete_sequence=COLOR_SEQ,
+                         template=PLOTLY_TEMPLATE)
+            fig.update_traces(textposition="outside", textinfo="percent+label",
+                              textfont_size=11)
+            fig.update_layout(showlegend=False,
+                              margin=dict(t=10, b=10, l=10, r=10), height=320)
+            st.plotly_chart(fig, use_container_width=True)
 
-    with col_c:
-        tier_condition = df.groupby(["Price_tier", "Condition"]).size().reset_index(name="Count")
-        tier_condition = tier_condition[tier_condition["Price_tier"].notna()]
-        fig = px.bar(tier_condition, x="Price_tier", y="Count", color="Condition",
-                     barmode="stack", template=PLOTLY_TEMPLATE,
-                     color_discrete_sequence=COLOR_SEQ,
-                     labels={"Price_tier": "Price Tier", "Count": "Listings"},
-                     title="Condition Mix per Price Tier")
-        fig.update_layout(height=360, xaxis=dict(tickangle=-15),
-                          legend=dict(orientation="h", y=-0.25, font=dict(size=10)))
-        st.plotly_chart(fig, use_container_width=True)
+        with col_d:
+            st.markdown('<div class="section-title">Free vs Paid Shipping by Family</div>',
+                        unsafe_allow_html=True)
+            ship_fam = (df2.groupby("Product_Family")["Shipping_type"]
+                        .apply(lambda x: round((x == "Free shipping").mean() * 100, 1))
+                        .reset_index())
+            ship_fam.columns = ["Product_Family", "Free_Ship_%"]
+            ship_fam = ship_fam.sort_values("Free_Ship_%", ascending=True)
+            fig = px.bar(
+                ship_fam, x="Free_Ship_%", y="Product_Family",
+                orientation="h",
+                color="Free_Ship_%",
+                color_continuous_scale=["#FF6B6B", "#FFB347", "#00C49F"],
+                template=PLOTLY_TEMPLATE,
+                labels={"Free_Ship_%": "Free Shipping %", "Product_Family": ""},
+                text="Free_Ship_%",
+            )
+            fig.update_traces(texttemplate="%{text:.0f}%", textposition="outside")
+            fig.update_layout(height=320, showlegend=False,
+                              coloraxis_showscale=False,
+                              margin=dict(t=10, b=10),
+                              xaxis=dict(range=[0, 105]))
+            st.plotly_chart(fig, use_container_width=True)
 
-    with col_d:
-        tier_ship = df.groupby(["Price_tier", "Shipping_type"]).size().reset_index(name="Count")
-        tier_ship = tier_ship[tier_ship["Price_tier"].notna()]
-        fig = px.bar(tier_ship, x="Price_tier", y="Count", color="Shipping_type",
-                     barmode="group", template=PLOTLY_TEMPLATE,
-                     color_discrete_map={"Free shipping":"#00C49F","Paid shipping":"#FF6B6B"},
-                     labels={"Price_tier": "Price Tier", "Count": "Listings"},
-                     title="Shipping Type per Price Tier")
-        fig.update_layout(height=360, xaxis=dict(tickangle=-15),
-                          legend=dict(orientation="h", y=-0.25, font=dict(size=10)))
-        st.plotly_chart(fig, use_container_width=True)
-
-    # Top 10 most expensive
-    st.markdown('<div class="section-title">Top 10 Most Expensive Listings</div>', unsafe_allow_html=True)
-    top10 = (df.nlargest(10, "Price_sold")
-             [["Title", "Price_sold", "Condition", "Listing_type", "Shipping_type", "Link"]]
-             .reset_index(drop=True))
-    top10.index += 1
-    top10["Price_sold"] = top10["Price_sold"].apply(lambda x: f"${x:,.2f}")
-    top10["Title"] = top10["Title"].str[:70]
-    st.dataframe(top10, use_container_width=True)
+        # ── Top 10 Most Expensive ────────────────────────────────────────────────
+        st.markdown('<div class="section-title">Top 10 Most Expensive Listings</div>',
+                    unsafe_allow_html=True)
+        top10 = (df2.nlargest(10, "Price_sold")
+                 [["Title", "Product_Family", "Price_sold", "Condition",
+                   "Listing_type", "Shipping_type"]]
+                 .reset_index(drop=True))
+        top10.index += 1
+        top10["Price_sold"] = top10["Price_sold"].apply(lambda x: f"${x:,.2f}")
+        top10["Title"] = top10["Title"].str[:65]
+        st.dataframe(top10, use_container_width=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 3 — OUTLIER DETECTION
@@ -396,7 +603,7 @@ with t2:
 with t3:
     st.markdown('<div class="section-title">Anomaly & Outlier Detection</div>', unsafe_allow_html=True)
 
-    col_cfg1, col_cfg2, col_cfg3 = st.columns([1.5, 1, 1])
+    col_cfg1, col_cfg2, col_cfg3, col_cfg4 = st.columns([1.5, 1, 1, 1.2])
     with col_cfg1:
         method = st.radio("Detection Method", ["IQR (Interquartile Range)", "Z-Score"],
                           horizontal=True)
@@ -409,19 +616,55 @@ with t3:
                                  help="2.5 flags top/bottom ~1% of listings")
     with col_cfg3:
         outlier_col = st.selectbox("Variable", ["Price_sold", "Shipping_cost_value"])
+    with col_cfg4:
+        family_aware = st.toggle(
+            "Family-aware bounds",
+            value=True,
+            help="When ON, outlier thresholds are calculated per Product Family — "
+                 "a $600 camera is NOT an outlier, but a $600 PSP is."
+        )
 
-    # Calculate outliers
-    vals = df[outlier_col].dropna()
+    # ── Calculate outliers ───────────────────────────────────────────────────────
+    df_out = df.copy()
+
     if "IQR" in method:
-        Q1, Q3 = vals.quantile(0.25), vals.quantile(0.75)
-        IQR = Q3 - Q1
-        lower, upper = Q1 - iqr_mult * IQR, Q3 + iqr_mult * IQR
-        df["is_outlier"] = (df[outlier_col] < lower) | (df[outlier_col] > upper)
-        boundary_text = f"Bounds: ${lower:.2f} – ${upper:.2f}"
+        if family_aware:
+            def iqr_flag_per_family(group):
+                v = group[outlier_col].dropna()
+                if len(v) < 4:
+                    group["is_outlier"] = False
+                    return group
+                Q1, Q3 = v.quantile(0.25), v.quantile(0.75)
+                IQR_val = Q3 - Q1
+                lo, hi = Q1 - iqr_mult * IQR_val, Q3 + iqr_mult * IQR_val
+                group["is_outlier"] = (group[outlier_col] < lo) | (group[outlier_col] > hi)
+                return group
+            df_out = df_out.groupby("Product_Family", group_keys=False).apply(iqr_flag_per_family)
+            boundary_text = f"IQR ×{iqr_mult} — computed per Product Family"
+        else:
+            vals = df_out[outlier_col].dropna()
+            Q1, Q3 = vals.quantile(0.25), vals.quantile(0.75)
+            IQR = Q3 - Q1
+            lower, upper = Q1 - iqr_mult * IQR, Q3 + iqr_mult * IQR
+            df_out["is_outlier"] = (df_out[outlier_col] < lower) | (df_out[outlier_col] > upper)
+            boundary_text = f"Global bounds: ${lower:.2f} – ${upper:.2f}"
     else:
-        z_scores = np.abs(stats.zscore(df[outlier_col].fillna(df[outlier_col].median())))
-        df["is_outlier"] = z_scores > z_thresh
-        boundary_text = f"Z-Score > ±{z_thresh}"
+        if family_aware:
+            def zscore_flag_per_family(group):
+                v = group[outlier_col].fillna(group[outlier_col].median())
+                if v.std() == 0 or len(v) < 4:
+                    group["is_outlier"] = False
+                    return group
+                group["is_outlier"] = np.abs(stats.zscore(v)) > z_thresh
+                return group
+            df_out = df_out.groupby("Product_Family", group_keys=False).apply(zscore_flag_per_family)
+            boundary_text = f"Z-Score > ±{z_thresh} — computed per Product Family"
+        else:
+            z_scores = np.abs(stats.zscore(df_out[outlier_col].fillna(df_out[outlier_col].median())))
+            df_out["is_outlier"] = z_scores > z_thresh
+            boundary_text = f"Global Z-Score > ±{z_thresh}"
+
+    df = df_out.copy()
 
     n_outliers = df["is_outlier"].sum()
     outlier_pct = n_outliers / len(df) * 100
@@ -441,45 +684,47 @@ with t3:
 
     st.markdown(f'<div class="insight-box">📐 {boundary_text}</div>', unsafe_allow_html=True)
 
-    # Scatter plot
+    # Scatter plot — coloured by Product Family for context
     df_plot = df.copy()
     df_plot["Status"] = df_plot["is_outlier"].map({True: "🚨 Outlier", False: "✅ Normal"})
-    df_plot["Label"] = df_plot["Title"].str[:40]
+    df_plot["Label"] = df_plot["Title"].str[:50]
 
     fig = px.scatter(
         df_plot, x=df_plot.index, y=outlier_col,
-        color="Status",
-        color_discrete_map={"🚨 Outlier": "#FF6B6B", "✅ Normal": "#4C8BF5"},
-        hover_data={"Label": True, "Condition": True, "Listing_type": True,
-                    outlier_col: True, "Status": False},
+        color="Product_Family" if family_aware else "Status",
+        symbol="Status",
+        symbol_map={"🚨 Outlier": "x", "✅ Normal": "circle"},
+        color_discrete_sequence=COLOR_SEQ * 3,
+        hover_data={"Label": True, "Product_Family": True,
+                    "Condition": True, outlier_col: True, "Status": True},
         template=PLOTLY_TEMPLATE,
         labels={outlier_col: outlier_col.replace("_", " "), "index": "Listing Index"},
-        title=f"Outlier Detection — {outlier_col.replace('_', ' ')}"
+        title=f"Outlier Detection — {outlier_col.replace('_', ' ')} ({'Family-aware' if family_aware else 'Global'})"
     )
-    if "IQR" in method:
+    if not family_aware and "IQR" in method:
         fig.add_hline(y=upper, line_dash="dash", line_color="#FFB347",
-                      annotation_text=f"Upper bound ${upper:.0f}")
+                      annotation_text=f"Upper ${upper:.0f}")
         if lower > 0:
             fig.add_hline(y=lower, line_dash="dash", line_color="#FFB347",
-                          annotation_text=f"Lower bound ${lower:.0f}")
-    fig.update_layout(height=400, margin=dict(t=40, b=10),
-                      legend=dict(orientation="h", y=1.08))
+                          annotation_text=f"Lower ${lower:.0f}")
+    fig.update_layout(height=420, margin=dict(t=40, b=10),
+                      legend=dict(orientation="h", y=1.08, font=dict(size=10)))
     st.plotly_chart(fig, use_container_width=True)
 
     col_left, col_right = st.columns(2)
 
     with col_left:
-        # Box plot with outliers marked
+        # Box plot — normal vs outliers
         fig = go.Figure()
         fig.add_trace(go.Box(
             y=df[~df["is_outlier"]][outlier_col],
-            name="Normal", marker_color="#4C8BF5",
+            name="✅ Normal", marker_color="#4C8BF5",
             boxpoints="outliers"
         ))
         if n_outliers > 0:
             fig.add_trace(go.Box(
                 y=df[df["is_outlier"]][outlier_col],
-                name="Outliers", marker_color="#FF6B6B",
+                name="🚨 Outlier", marker_color="#FF6B6B",
                 boxpoints="all", jitter=0.4
             ))
         fig.update_layout(template=PLOTLY_TEMPLATE, height=360,
@@ -488,15 +733,27 @@ with t3:
         st.plotly_chart(fig, use_container_width=True)
 
     with col_right:
-        # Outlier breakdown by condition
         if n_outliers > 0:
-            outlier_cond = df[df["is_outlier"]]["Condition"].value_counts().reset_index()
-            outlier_cond.columns = ["Condition", "Count"]
-            fig = px.bar(outlier_cond, x="Count", y="Condition", orientation="h",
-                         color="Count", color_continuous_scale="Reds",
-                         template=PLOTLY_TEMPLATE,
-                         title="Outliers by Condition")
-            fig.update_layout(height=360, showlegend=False, coloraxis_showscale=False)
+            # Outlier breakdown by Product Family (more informative than condition)
+            outlier_fam = (df[df["is_outlier"]]["Product_Family"]
+                           .value_counts().reset_index())
+            outlier_fam.columns = ["Product_Family", "Count"]
+            outlier_fam["Outlier_%"] = (
+                outlier_fam["Count"] /
+                df["Product_Family"].map(df["Product_Family"].value_counts()) * 100
+            ).round(1)
+            fig = px.bar(
+                outlier_fam, x="Count", y="Product_Family", orientation="h",
+                color="Count", color_continuous_scale="Reds",
+                template=PLOTLY_TEMPLATE,
+                title="Outliers by Product Family",
+                text="Count",
+                labels={"Product_Family": "", "Count": "Outlier count"},
+            )
+            fig.update_traces(textposition="outside")
+            fig.update_layout(height=360, showlegend=False,
+                              coloraxis_showscale=False,
+                              margin=dict(t=40, b=10))
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No outliers detected with current settings.")
@@ -506,17 +763,19 @@ with t3:
         st.markdown('<div class="section-title">🚨 Flagged Listings</div>',
                     unsafe_allow_html=True)
         flagged = (df[df["is_outlier"]]
-                   [["Title", "Price_sold", "Condition", "Listing_type",
-                     "Shipping_cost_value", "Shipping_type", "Link"]]
+                   [["Title", "Product_Family", "Price_sold", "Condition",
+                     "Listing_type", "Shipping_cost_value", "Shipping_type"]]
                    .sort_values("Price_sold", ascending=False)
                    .reset_index(drop=True))
         flagged.index += 1
         flagged["Price_sold"] = flagged["Price_sold"].apply(lambda x: f"${x:,.2f}")
-        flagged["Title"] = flagged["Title"].str[:65]
+        flagged["Title"] = flagged["Title"].str[:60]
         st.dataframe(flagged, use_container_width=True)
 
-        insight(f"{n_outliers} listings ({outlier_pct:.1f}%) were flagged as anomalous in {outlier_col.replace('_',' ')}. "
-                "Outliers in ecommerce often indicate pricing errors, rare collectibles, or data quality issues worth investigating.")
+        mode_label = "family-aware" if family_aware else "global"
+        insight(f"{n_outliers} listings ({outlier_pct:.1f}%) flagged using {mode_label} {method.split()[0]} bounds. "
+                "Family-aware detection finds items that are anomalous within their own category — "
+                "a much more reliable signal than global thresholds on a mixed catalogue.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 4 — SELLER SEGMENTATION
