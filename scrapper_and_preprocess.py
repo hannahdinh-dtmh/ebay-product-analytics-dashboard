@@ -42,7 +42,7 @@ product_data = []
 
 # Iterate over page numbers 1 to 5 then
 # Iterate over page numbers 6 to 10
-for page_num in range(6, 11):
+for page_num in range(1, 11):
     print(f"Scraping page {page_num}...")
     url = url_pattern.format(page_num=page_num)
 
@@ -130,35 +130,36 @@ Electronics = pd.DataFrame(
     ]
 )
 
-# Clean Condition — strip concatenated category/brand text after bullet or newline
-# Handles · (U+00B7), ¬∑ (Latin-1 mis-encoding), newlines
+# ── Condition Cleaning ──────────────────────────────────────────────────────────
+# Strip concatenated brand/model text after bullet variants & encoding artefacts
+# e.g. "Pre-Owned ·Nintendo DS"  → "Pre-Owned"
+#      "Good - Refurbished ¬∑Sony PSP" → "Good - Refurbished"
+import re as _re
 Electronics['Condition'] = (
     Electronics['Condition']
-    .str.split(r'[·•\n]|¬∑', regex=True).str[0]
-    .str.strip()
+    .apply(lambda x: _re.split(r'[·•\n]|¬∑', str(x))[0].strip())
     .replace('', 'Unknown')
 )
 
-# ── Product Family Classification ───────────────────────────────────────────────
-
+# ── Product Family Classification ────────────────────────────────────────────────
 FAMILY_RULES = [
-    ('Nintendo Switch',        ['nintendo switch']),
-    ('Nintendo 3DS / 2DS',     ['3ds', '2ds']),
-    ('Nintendo GameCube / Wii',['gamecube', 'nintendo wii', 'wii ']),
-    ('PlayStation',            ['playstation', 'ps2', 'ps3', 'ps4', 'ps5',
-                                 'psp', 'ps vita', 'psvita']),
-    ('Xbox',                   ['xbox']),
-    ('Cameras & Photography',  ['camera', 'canon', 'nikon', 'mirrorless',
-                                 'dslr', 'eos', 'fujifilm', 'leica']),
-    ('Smartphones',            ['iphone', 'smartphone', 'android unlocked',
-                                 'dual sim', 'umidigi', 'unlocked phone']),
-    ('Laptops & Tablets',      ['laptop', 'tablet', 'ipad', 'macbook', 'chromebook']),
-    ('Audio',                  ['headphone', 'earphone', 'speaker',
-                                 'airpod', 'earbud', 'earbuds']),
-    ('Retro / Other Consoles', ['retro', 'game stick', 'atari', 'sega',
-                                 'neo geo', 'famicom']),
-    ('Accessories & Parts',    ['parts only', 'charger', 'cable', 'game pass',
-                                 'controller', 'memory card', 'adapter', 'membership']),
+    ('Nintendo Switch',         ['nintendo switch']),
+    ('Nintendo 3DS / 2DS',      ['3ds', '2ds']),
+    ('Nintendo GameCube / Wii', ['gamecube', 'nintendo wii', 'wii ']),
+    ('PlayStation',             ['playstation', 'ps2', 'ps3', 'ps4', 'ps5',
+                                  'psp', 'ps vita', 'psvita']),
+    ('Xbox',                    ['xbox']),
+    ('Cameras & Photography',   ['camera', 'canon', 'nikon', 'mirrorless',
+                                  'dslr', 'eos', 'fujifilm', 'leica']),
+    ('Smartphones',             ['iphone', 'smartphone', 'android unlocked',
+                                  'dual sim', 'umidigi', 'unlocked phone']),
+    ('Laptops & Tablets',       ['laptop', 'tablet', 'ipad', 'macbook', 'chromebook']),
+    ('Audio',                   ['headphone', 'earphone', 'speaker',
+                                  'airpod', 'earbud', 'earbuds']),
+    ('Retro / Other Consoles',  ['retro', 'game stick', 'atari', 'sega',
+                                  'neo geo', 'famicom']),
+    ('Accessories & Parts',     ['parts only', 'charger', 'cable', 'game pass',
+                                  'controller', 'memory card', 'adapter', 'membership']),
 ]
 
 def classify_product_family(title: str) -> str:
@@ -170,7 +171,7 @@ def classify_product_family(title: str) -> str:
 
 Electronics['Product_Family'] = Electronics['Title'].apply(classify_product_family)
 
-# Parse seller rating string → numeric columns
+# ── Parse seller rating string → numeric columns
 # Format: "100% positive (165)"
 Electronics['Seller_Rating%'] = pd.to_numeric(
     Electronics['Seller_rating'].str.extract(r'([\d\.]+)%')[0], errors='coerce'
