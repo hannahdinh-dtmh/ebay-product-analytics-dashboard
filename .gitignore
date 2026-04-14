@@ -33,3 +33,9 @@ ENV/
 
 # Logs
 *.log
+
+# Exploratory / debug files (not needed for the portfolio repo)
+analysis.py
+debug_scraper.py
+ebay_raw.html
+eBay_scraper.ipynb
