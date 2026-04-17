@@ -685,12 +685,13 @@ with t3:
     st.markdown(f'<div class="insight-box">📐 {boundary_text}</div>', unsafe_allow_html=True)
 
     # Scatter plot — coloured by Product Family for context
-    df_plot = df.copy()
+    df_plot = df.copy().reset_index(drop=True)
     df_plot["Status"] = df_plot["is_outlier"].map({True: "🚨 Outlier", False: "✅ Normal"})
     df_plot["Label"] = df_plot["Title"].str[:50]
+    df_plot["Listing Index"] = df_plot.index
 
     fig = px.scatter(
-        df_plot, x=df_plot.index, y=outlier_col,
+        df_plot, x="Listing Index", y=outlier_col,
         color="Product_Family" if family_aware else "Status",
         symbol="Status",
         symbol_map={"🚨 Outlier": "x", "✅ Normal": "circle"},
@@ -698,7 +699,7 @@ with t3:
         hover_data={"Label": True, "Product_Family": True,
                     "Condition": True, outlier_col: True, "Status": True},
         template=PLOTLY_TEMPLATE,
-        labels={outlier_col: outlier_col.replace("_", " "), "index": "Listing Index"},
+        labels={outlier_col: outlier_col.replace("_", " ")},
         title=f"Outlier Detection — {outlier_col.replace('_', ' ')} ({'Family-aware' if family_aware else 'Global'})"
     )
     if not family_aware and "IQR" in method:
