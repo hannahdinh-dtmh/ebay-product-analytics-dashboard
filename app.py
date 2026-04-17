@@ -696,8 +696,8 @@ with t3:
         symbol="Status",
         symbol_map={"🚨 Outlier": "x", "✅ Normal": "circle"},
         color_discrete_sequence=COLOR_SEQ * 3,
-        hover_data={"Label": True, "Product_Family": True,
-                    "Condition": True, outlier_col: True, "Status": True},
+        hover_data={"Label": True, "Condition": True,
+                    "Product_Family": True},
         template=PLOTLY_TEMPLATE,
         labels={outlier_col: outlier_col.replace("_", " ")},
         title=f"Outlier Detection — {outlier_col.replace('_', ' ')} ({'Family-aware' if family_aware else 'Global'})"
