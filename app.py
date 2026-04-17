@@ -629,17 +629,15 @@ with t3:
 
     if "IQR" in method:
         if family_aware:
-            def iqr_flag_per_family(group):
-                v = group[outlier_col].dropna()
+            def _iqr_flag(s):
+                v = s.dropna()
                 if len(v) < 4:
-                    group["is_outlier"] = False
-                    return group
+                    return pd.Series(False, index=s.index)
                 Q1, Q3 = v.quantile(0.25), v.quantile(0.75)
                 IQR_val = Q3 - Q1
                 lo, hi = Q1 - iqr_mult * IQR_val, Q3 + iqr_mult * IQR_val
-                group["is_outlier"] = (group[outlier_col] < lo) | (group[outlier_col] > hi)
-                return group
-            df_out = df_out.groupby("Product_Family", group_keys=False).apply(iqr_flag_per_family)
+                return (s < lo) | (s > hi)
+            df_out["is_outlier"] = df_out.groupby("Product_Family")[outlier_col].transform(_iqr_flag)
             boundary_text = f"IQR ×{iqr_mult} — computed per Product Family"
         else:
             vals = df_out[outlier_col].dropna()
@@ -650,14 +648,12 @@ with t3:
             boundary_text = f"Global bounds: ${lower:.2f} – ${upper:.2f}"
     else:
         if family_aware:
-            def zscore_flag_per_family(group):
-                v = group[outlier_col].fillna(group[outlier_col].median())
-                if v.std() == 0 or len(v) < 4:
-                    group["is_outlier"] = False
-                    return group
-                group["is_outlier"] = np.abs(stats.zscore(v)) > z_thresh
-                return group
-            df_out = df_out.groupby("Product_Family", group_keys=False).apply(zscore_flag_per_family)
+            def _zscore_flag(s):
+                filled = s.fillna(s.median())
+                if filled.std() == 0 or len(filled) < 4:
+                    return pd.Series(False, index=s.index)
+                return pd.Series(np.abs(stats.zscore(filled)) > z_thresh, index=s.index)
+            df_out["is_outlier"] = df_out.groupby("Product_Family")[outlier_col].transform(_zscore_flag)
             boundary_text = f"Z-Score > ±{z_thresh} — computed per Product Family"
         else:
             z_scores = np.abs(stats.zscore(df_out[outlier_col].fillna(df_out[outlier_col].median())))
