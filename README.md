@@ -23,52 +23,6 @@ An end-to-end data pipeline that scrapes live electronics listings from eBay, pr
 
 ---
 
-## Project Structure
-
-```
-ebay-product-analytics-dashboard/
-├── scrapper_and_preprocess.py  # eBay scraper + data cleaning + family classification
-├── app.py                      # 5-tab Streamlit dashboard
-├── Electronics.csv             # Sample scraped dataset (electronics category)
-├── requirements.txt            # Python dependencies
-└── README.md
-```
-
----
-
-## Getting Started
-
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/hannahdinh-dtmh/ebay-product-analytics-dashboard.git
-cd ebay-product-analytics-dashboard
-```
-
-### 2. Install dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-### 3. Scrape fresh data (optional)
-
-```bash
-python scrapper_and_preprocess.py
-```
-
-Scrapes eBay electronics listings across 10 pages (~2,400 rows) and saves to `Electronics.csv`. A sample dataset is already included if you want to skip this step.
-
-### 4. Launch the dashboard
-
-```bash
-streamlit run app.py
-```
-
-Open [http://localhost:8501](http://localhost:8501) — the dashboard auto-loads `Electronics.csv` and provides interactive sidebar filters for product family, condition, listing type, and price range.
-
----
-
 ## Tech Stack
 
 | Tool | Purpose |
