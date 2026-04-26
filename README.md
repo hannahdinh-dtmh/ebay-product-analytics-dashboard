@@ -66,4 +66,4 @@ An end-to-end data pipeline that scrapes live electronics listings from eBay, pr
 
 ## License
 
-MIT License — free to use, modify, and distribute.
+
